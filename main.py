@@ -1,44 +1,71 @@
-import RPi.GPIO as GPIO
-import time
 import subprocess
-from moviepy.editor import *
+import time
+import RPi.GPIO as GPIO
+import pygame
 
-# Set up GPIO pins
-GPIO.setmode(GPIO.BCM)
 button_pins = [26, 19, 13, 6, 5, 21, 20]
-for pin in button_pins:
-    GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+video_device = "/dev/video0"
+audio_device = "hw:1"
+recording_time = 5
 
-# Set up audio and video recording
-audio_filename = "audio.wav"
-video_filename = "video.mp4"
-recording_command = ["ffmpeg", "-f", "alsa", "-i", "hw:1", "-f", "v4l2", "-r", "30", "-s", "1280x720", "-i", "/dev/video0", "-t", "5", "-c:v", "libx264", "-preset", "ultrafast", "-qp", "0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-strict", "experimental", "-b:a", "192k", "-shortest", "-y", video_filename]
+def record_audio_video():
+    # Define the command to capture audio and video
+    recording_command = [
+        "ffmpeg",
+        "-f", "alsa",
+        "-i", audio_device,
+        "-f", "video4linux2",
+        "-input_format", "mjpeg",
+        "-video_size", "640x480",
+        "-i", video_device,
+        "-t", str(recording_time),
+        "-y",
+        "output.mp4"
+    ]
 
-# Set up video playback
-video_playback_command = ["omxplayer", "-o", "hdmi", "-b", video_filename]
+    # Start the recording process
+    subprocess.run(recording_command)
 
-# Main loop
-while True:
-    # Wait for button press
+def play_audio_video():
+    # Initialize pygame mixer
+    pygame.mixer.pre_init(44100, -16, 2, 1024)
+    pygame.init()
+
+    # Load the audio file
+    audio = pygame.mixer.Sound("output.mp4")
+
+    # Create a new display surface
+    screen = pygame.display.set_mode((640, 480))
+
+    # Play the audio and display the video
+    audio.play()
+    video = pygame.movie.Movie("output.mp4")
+    video.set_display(screen, pygame.Rect((0, 0, 640, 480)))
+    video.play()
+
+    # Wait for the playback to finish
+    while video.get_busy():
+        pygame.time.Clock().tick(30)
+
+    # Clean up resources
+    audio.stop()
+    video.stop()
+
+def main():
+    # Set up GPIO pins
+    GPIO.setmode(GPIO.BCM)
     for pin in button_pins:
-        if GPIO.input(pin) == GPIO.LOW:
-            button_pressed = pin
-            break
-    else:
-        time.sleep(0.1)
-        continue
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-    # Record audio and video
-    subprocess.run(recording_command, check=True)
+    while True:
+        # Wait for a button press
+        input_state = GPIO.input(button_pins)
+        if input_state == GPIO.LOW:
+            # Record audio and video
+            record_audio_video()
 
-    # Merge audio and video
-    video = VideoFileClip(video_filename)
-    audio = AudioFileClip(audio_filename)
-    video_with_audio = video.set_audio(audio)
-    merged_filename = f"{button_pressed}.mp4"
-    video_with_audio.write_videofile(merged_filename)
+            # Play back the merged audio and video
+            play_audio_video()
 
-    # Play back video
-    subprocess.run(video_playback_command, check=True)
-
-    print(f"Button {button_pressed} pressed - audio and video merged to {merged_filename}")
+if __name__ == "__main__":
+    main()
